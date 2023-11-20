@@ -1,0 +1,28 @@
+Application Name:
+dshogi
+
+Description:
+Dobutsu Shogi is Japanese board game. (cf. http://doubutsushogi.jp/)
+This is the primitive implementation of Dobutsu Shogi with python.
+
+How to start:
+Double click front.py file to start.
+Or type 'python front.py' on command line to start.
+
+Requirement:
+python, wxpython
+
+Licence:
+GNU General Public License version 2
+
+Developer:
+yuto.matsum
+
+Thanks for...
+M. Kitao(Dobutsu Shogi designer),
+A. Griggio(wxGlade developer),
+wxPython Developers, and Python Developers.
+
+See also...
+http://code.google.com/p/dshogi/
+
