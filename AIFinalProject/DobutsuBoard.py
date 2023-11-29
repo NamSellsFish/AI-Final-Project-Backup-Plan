@@ -983,7 +983,7 @@ class DobutsuEngine(Engine):
     state_list: list[LazilyExpandedTree[DobutsuGameState]] = []
 
     def __init__(self,
-                 func: Callable[[LazilyExpandedTree[DobutsuGameState]], Score | Mate] = heuristic_sample1) -> None:
+                 func: Callable[[LazilyExpandedTree[DobutsuGameState]], Score] = heuristic_sample1) -> None:
         self.reset()
         self.func = func
 
@@ -1006,7 +1006,7 @@ class DobutsuEngine(Engine):
     def search(self, depth: int) -> MoveEvaluation | None:
         evaluation = negamax_moves(self.state_list[-1],
                     depth,
-                    heuristic_sample1,
+                    self.func,
                     is_checkmate)
         
         return MoveEvaluation(str(evaluation[0][0]), evaluation[0][1]) if len(evaluation) > 0 \

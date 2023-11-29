@@ -68,11 +68,10 @@ flattened_inputs = [gamestate_to_bits(gamestate)
                     for gamestate in position_eval_map]
 
 # %%
-print(flattened_inputs)
-
-# %%
 X = flattened_inputs
 y = [eval for _, eval in position_eval_map.items()]
+
+print(y)
 
 def test(test_size):
     X_train, X_test, y_train, y_test = train_test_split(
@@ -105,7 +104,6 @@ lr.fit(X_train, y_train)
 y_pred_test = lr.predict(X_test)
 
 dump(lr, 'linear_regression.joblin')
-
 
 # %%
 print(lr.predict([gamestate_to_bits(root_state.instance)])[0]) # type: ignore
