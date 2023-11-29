@@ -40,19 +40,19 @@ def resize_image(image_path, resize: tuple[int, int] | None):
 img_size = (52, 52)
 
 texture_map = {
-    '.' : resize_image('AIFinalProject\\pieces\\empty.png', img_size),
+    '.' : resize_image('pieces\\empty.png', img_size),
 
-    'C' : resize_image('AIFinalProject\\pieces\\w-pawn.png', img_size),
-    'E' : resize_image('AIFinalProject\\pieces\\w-elephant.png', img_size),
-    'G' : resize_image('AIFinalProject\\pieces\\w-giraffe.png', img_size),
-    'L' : resize_image('AIFinalProject\\pieces\\w-lion.png', img_size),
-    'H' : resize_image('AIFinalProject\\pieces\\w-commoner.png', img_size),
+    'C' : resize_image('pieces\\w-pawn.png', img_size),
+    'E' : resize_image('pieces\\w-elephant.png', img_size),
+    'G' : resize_image('pieces\\w-giraffe.png', img_size),
+    'L' : resize_image('pieces\\w-lion.png', img_size),
+    'H' : resize_image('pieces\\w-commoner.png', img_size),
 
-    'c' : resize_image('AIFinalProject\\pieces\\b-pawn.png', img_size),
-    'e' : resize_image('AIFinalProject\\pieces\\b-elephant.png', img_size),
-    'g' : resize_image('AIFinalProject\\pieces\\b-giraffe.png', img_size),
-    'l' : resize_image('AIFinalProject\\pieces\\b-lion.png', img_size),
-    'h' : resize_image('AIFinalProject\\pieces\\b-commoner.png', img_size),
+    'c' : resize_image('pieces\\b-pawn.png', img_size),
+    'e' : resize_image('pieces\\b-elephant.png', img_size),
+    'g' : resize_image('pieces\\b-giraffe.png', img_size),
+    'l' : resize_image('pieces\\b-lion.png', img_size),
+    'h' : resize_image('pieces\\b-commoner.png', img_size),
 }
 
 white_hand_color = 'gray'
@@ -293,7 +293,7 @@ def engine_play():
 
     window.Finalize()
     
-    move = dobutsu_engine.search(6)
+    move = dobutsu_engine.search(4)
 
     if not isinstance(move, MoveEvaluation): return
 
@@ -301,7 +301,7 @@ def engine_play():
 
     load_board()
 
-lr : LinearRegression = load('AIFinalProject\\linear_regression.joblin')
+lr : LinearRegression = load('linear_regression.joblin')
 
 def logistics_regression_evaluation(
         node: LazilyExpandedTree[DobutsuGameState]) -> Score:

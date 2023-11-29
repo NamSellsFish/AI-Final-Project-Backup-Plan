@@ -1,11 +1,9 @@
 # %%
 from enum import Enum
 from functools import cmp_to_key
-import sys
 from types import MappingProxyType
 from typing import Any, Callable, Generator, Generic, Iterable, Protocol, TypeVar, Union, runtime_checkable
 import numpy as np
-from overrides import EnforceOverrides, override
 from fairysf import Engine, FairyStockfishEngine, Mate, MoveEvaluation
 
 
@@ -1121,7 +1119,7 @@ def gamestate_to_bits(gamestate: DobutsuGameState) -> list[int]:
 
 def create_fsf_engine() -> FairyStockfishEngine:
     '''Create fsf engine to play Dobutsu.'''
-    _fsf_engine = FairyStockfishEngine("AIFinalProject\\fairystockfish\\fairy-stockfish_x86-64.exe")
+    _fsf_engine = FairyStockfishEngine("fairystockfish\\fairy-stockfish_x86-64.exe")
     _fsf_engine.uci()
     _fsf_engine.set_variant('dobutsu')
     return _fsf_engine
