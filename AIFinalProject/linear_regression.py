@@ -112,3 +112,7 @@ dump(lr, 'linear_regression.joblin')
 print(lr.predict([gamestate_to_bits(root_state.instance)])[0]) # type: ignore
 print(position_eval_map[root_state.instance])
 # %%
+print(len(lr.coef_))
+print(lr.coef_)
+
+# %%

@@ -657,9 +657,9 @@ class GameResult(Enum):
 
 
 result_text_map = {
-    GameResult.WhiteWin : "1 - 0",
-    GameResult.BlackWin : "0 - 1",
-    GameResult.Draw : "1/2 - 1/2"
+    GameResult.WhiteWin : "White wins.",
+    GameResult.BlackWin : "Black wins.",
+    GameResult.Draw : "Draw."
 }
 
 T = TypeVar("T")
