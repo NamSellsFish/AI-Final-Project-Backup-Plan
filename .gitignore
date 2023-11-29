@@ -1,1 +1,11 @@
 *.vscode
+.idea/AI-Final-Project-Backup-Plan.iml
+.idea/misc.xml
+.idea/modules.xml
+.idea/inspectionProfiles/profiles_settings.xml
+.idea/inspectionProfiles/Project_Default.xml
+.idea/vcs.xml
+AIFinalProject/__pycache__/DobutsuBoard.cpython-312.pyc
+AIFinalProject/__pycache__/fairysf.cpython-312.pyc
+packages.puml
+classes.puml
