@@ -1,19 +1,16 @@
 # %%
 from enum import Enum
 from functools import cmp_to_key
-import subprocess
 import sys
 from types import MappingProxyType
-from typing import Callable, Generic, Iterable, Protocol, TypeVar, Union
+from typing import Any, Callable, Generator, Generic, Iterable, Protocol, TypeVar, Union, runtime_checkable
 import numpy as np
 from overrides import EnforceOverrides, override
-from fairysf import Engine, FairyStockfishEngine, print_list_vertical
+from fairysf import Engine, FairyStockfishEngine, Mate, MoveEvaluation
 
 
 '''
-y^
-|
-O-->X (transposed)
+Contains board logic and engine handling logic.
 '''
 
 class NPArrayWrapper:
@@ -40,7 +37,9 @@ empty_3x4_board = get_empty_3x4_board()
 
 
 class PieceType:
-    
+    '''
+    Defines a piece type.
+    '''
     def __init__(self, name: str, w_symbol: str, b_symbol: str, moves: list[tuple[int, int]]) -> None:
         self.name = name
         self.w_symbol = w_symbol
@@ -57,7 +56,7 @@ class PieceType:
 Chick = PieceType('Chick', 'C', 'c', [(0, 1)])
 Elephant = PieceType('Elephant', 'E', 'e', [(1, 1), (1, -1), (-1, 1), (-1, -1)])
 Giraffe = PieceType('Giraffe', 'G', 'g', [(0, 1), (0, -1), (1, 0), (-1, 0)])
-Hen = PieceType('Hen', 'H', 'h', [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1)])
+Hen = PieceType('Hen', 'H', 'h', [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (-1, 1)])
 Lion = PieceType('Lion', 'L', 'l', [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)])
 
 all_piecetypes = [ Chick, Elephant, Giraffe, Hen, Lion]
@@ -69,33 +68,9 @@ for piece_type in all_piecetypes:
     symbol_dict[piece_type.w_symbol] = piece_type
 
 def shift_bitboard(bitboard: np.ndarray, vector: tuple[int, int]):
-    
     '''
-    # Create a new bitboard filled with False
-    new_bitboard = np.full(bitboard.shape, False)
-
-    (x, y) = vector
-
-    # Calculate the new indices
-    rows, cols = np.indices(bitboard.shape)
-    rows = np.clip(rows + x, 0, bitboard.shape[0] - 1)
-    cols = np.clip(cols - y, 0, bitboard.shape[1] - 1)
-
-    # Assign the shifted values to the new bitboard
-    new_bitboard[rows, cols] = bitboard
-
-    return new_bitboard
+    Shift all True value in 2d array to a vector, filling missing values with False.
     '''
-    '''
-    new_bitboard = np.roll(bitboard, vector, (0, 1))
-
-    new_bitboard[:vector[0], :] = False
-    new_bitboard[:, :vector[1]] = False
-
-    return new_bitboard
-    '''
-
-    deq0 = bitboard.tolist()
 
     result = np.full_like(bitboard, False)
     if vector[0] > 0:
@@ -114,33 +89,46 @@ def shift_bitboard(bitboard: np.ndarray, vector: tuple[int, int]):
     else:
         result = bitboard.copy()
 
-    deq = result.tolist()
-
     return result
 
 Count = int
 
 def get_locations(bitboard: np.ndarray, cond = True) -> list[tuple[int, int]]:
+    '''
+    Return all position in bitboard that satisfy cond.
+    '''
     locations = np.where(bitboard == cond)
     return list(zip(locations[0], locations[1]))
 
 def add(pos1: tuple[int, int], pos2: tuple[int, int]):
+    '''
+    Add 2 pos.
+    '''
     return (pos1[0] + pos2[0], pos1[1] + pos2[1])
 
 def within_bound(pos: tuple[int, int], bitboard: np.ndarray):
+    '''
+    Check if pos is within bound of board.
+    '''
     return 0 <= pos[0] < bitboard.shape[0] \
         and 0 <= pos[1] < bitboard.shape[1]
 
 def to_printable_board(board: np.ndarray):
+    '''
+    Rotates a board -90 degrees to match the UI.
+    '''
     return np.flip(board.transpose(), axis=0)
 
 def pos_to_string(pos: tuple[int, int]):
+    '''Convert pos to notation.'''
     return chr(pos[0] + 97) + str(pos[1] + 1)
 
 def string_to_pos(input: str):
+    '''Reverse of the above.'''
     return ( ord(input[0]) - 97, int(input[1]) - 1)
 
 class PieceMove:
+    '''Defines a move that move a piece OTB.'''
     def __init__(self,
                  startpos: tuple[int, int],
                  endpos: tuple[int, int]):
@@ -163,6 +151,7 @@ class PieceMove:
         return self.get_key() == __value.get_key()
 
 class PieceDrop:
+    '''Defines a Piece Drop.'''
     def __init__(self,
                  piece_type: PieceType,
                  pos: tuple[int, int]) -> None:
@@ -189,6 +178,7 @@ PieceDrops = tuple[tuple[int, int], list[PieceType]]
 Move = PieceMove | PieceDrop
 
 class ColoredPiece:
+    '''PieceType + Color'''
     def __init__(self, piece_type: PieceType, is_white: bool) -> None:
         self.piece_type = piece_type
         self.is_white = is_white
@@ -202,7 +192,10 @@ class ColoredPiece:
         return self.get_key() == __value.get_key()
         
 class DobutsuBoard:
-    
+    '''
+    Contains a list of bitboards & hand count.
+    Can be checked for equality.
+    '''
     def __init__(self,
                 color_boards: dict[bool, np.ndarray],
                 piece_boards: dict[PieceType, np.ndarray],
@@ -214,7 +207,7 @@ class DobutsuBoard:
         self.key = self.get_key()
     
     def get_king_location(self, is_white: bool):
-
+        '''Get pos of king of that color.'''
         board = self.piece_boards[Lion] & self.color_boards[is_white]
 
         locations = get_locations(board)
@@ -225,7 +218,7 @@ class DobutsuBoard:
         return locations[0]
 
     def get_defended_squares(self, piece_type: PieceType, is_white: bool):
-    
+        '''Get squares defended by that piece_type of that color.'''
         new_board = np.full((3, 4), False)
 
         pieces = self.color_boards[is_white] & self.piece_boards[piece_type] 
@@ -238,7 +231,7 @@ class DobutsuBoard:
         return new_board
 
     def get_all_defended_squares(self, is_white: bool) -> np.ndarray:
-
+        '''Get all squares defended by that color.'''
         boards: list[np.ndarray] = []
 
         for piece_type in self.piece_boards:
@@ -254,28 +247,17 @@ class DobutsuBoard:
                 result = result | board
 
         return result # type: ignore
-        
-
-    # Deprecated
-    def check_checking(self, is_white: bool):
-
-        king_location = self.get_king_location(is_white)
-
-        for piece_type in self.piece_boards:
-
-            if (piece_type == Lion): continue
-
-            threats = self.get_defended_squares(piece_type, not is_white)
-            if (threats[king_location] == True): return True
-    
-        return False
 
     def get_check_source(self, is_white: bool):
-
+        '''
+        Get pos of source of check, or None.
+        '''
         return self.get_attack_source(is_white, self.get_king_location(is_white))
 
     def get_attack_source(self, is_white: bool, pos: tuple[int, int]):
-
+        '''
+        Get pos of first attacking piece found.
+        '''
         for direction in Lion.moves:
             target = add(pos, direction)
 
@@ -287,11 +269,11 @@ class DobutsuBoard:
 
                 for move in piece_type.moves:
 
-                    k = -1 if is_white else 1
+                    k = 1 if is_white else -1
                     if move == (k*direction[0], k*direction[1]): return target
 
     def get_piece(self, pos: tuple[int, int]) -> ColoredPiece | None:
-
+        '''Get piece at this pos, or None.'''
         is_none = True
 
         color = False
@@ -310,7 +292,7 @@ class DobutsuBoard:
         return None
 
     def add_to_hand_dict(self, piece_type: PieceType, is_white: bool):
-        
+        '''Create a new dict with a piece added to hand.'''
         result = value_copy_dict(self.hand)
 
         if piece_type == Hen: piece_type = Chick
@@ -320,11 +302,12 @@ class DobutsuBoard:
         return result
 
     def is_king_win(self, is_white: bool):
+        '''Check if the King has reached the finish line.'''
         location = self.get_king_location(is_white)
         return location[1] == (3 if is_white else 0)
 
     def move_piece(self, startpos: tuple[int, int], endpos: tuple[int, int]):
-
+        '''Create a new board with that move played.'''
         color_dict = value_copy_dict(self.color_boards)
         piece_dict = value_copy_dict(self.piece_boards)
         hand_dict = value_copy_dict(self.hand)
@@ -376,7 +359,7 @@ class DobutsuBoard:
         return DobutsuBoard(color_dict, piece_dict, hand_dict)
 
     def drop_piece(self, piece_type: PieceType, pos: tuple[int, int], is_white: bool):
-
+        '''Create a new board with that move played.'''
         if (self.color_boards[True] & self.color_boards[False])[pos]: raise ValueError("Cannot drop on occupied square.")
         if self.hand[is_white][piece_type] <= 0: raise ValueError("Insufficient Piece Count to drop.")
 
@@ -391,6 +374,7 @@ class DobutsuBoard:
         return DobutsuBoard(color_dict, piece_dict, hand_dict)
 
     def move(self, move: Move, is_white: bool):
+        '''Overload of move_piece and drop_piece.'''
         if isinstance(move, PieceMove):
             return self.move_piece(move.startpos,
                                     move.endpos)
@@ -400,6 +384,7 @@ class DobutsuBoard:
                                       is_white)
         
     def get_mobility(self, is_white: bool) -> float:
+        '''Function to get count of possible moves of a side.'''
         result = 0
 
         empty_squares = get_locations(self.color_boards[True] | self.color_boards[False], False)
@@ -416,7 +401,9 @@ class DobutsuBoard:
         return result
 
     def get_legal_moves(self, is_white: bool) -> tuple[list[PieceMove], list[PieceDrops]]:
-        
+        '''Get legal moves of a side.'''
+        if self.is_king_win(is_white): return ([], [])
+
         if self.get_check_source(is_white) != None:
 
             return self._get_legal_moves_if_checked(is_white)
@@ -429,15 +416,19 @@ class DobutsuBoard:
 
         drops : list[PieceDrops] = []
 
+        check_source = self.get_check_source(is_white)
+
+        attacked = self.get_all_defended_squares(not is_white)        
+
+        king_location = self.get_king_location(is_white)        
+
         for direction in Lion.moves:
 
-            source = self.get_check_source(is_white)
-
-            target = add(source, direction) # type: ignore
+            target = add(check_source, direction) # type: ignore
 
             if not within_bound(target, empty_3x4_board.array): continue
 
-            if self.color_boards[not is_white][target]:
+            if self.color_boards[is_white][target]:
 
                 piece_type = self.get_piece(target).piece_type # type: ignore
 
@@ -446,16 +437,15 @@ class DobutsuBoard:
                 for move in piece_type.moves:
 
                     k = -1 if is_white else 1
-                    if move == (k*target[0], k*target[1]): moves.append(PieceMove(target, source)) # type: ignore
+                    if move == (k*direction[0], k*direction[1]):
+                        moves.append(PieceMove(target, check_source)) # type: ignore
 
-            king_location = self.get_king_location(is_white)
+        for direction in Lion.moves:
 
             escape = add(king_location, direction)
 
             if not within_bound(escape, empty_3x4_board.array) \
                 or self.color_boards[is_white][escape]: continue
-
-            attacked = self.get_all_defended_squares(not is_white)
 
             if not attacked[escape]:
                 moves.append(PieceMove(king_location, escape))
@@ -501,6 +491,7 @@ class DobutsuBoard:
         return (moves, drops)
 
     def to_symbol_array(self) -> np.ndarray[str, str]: # type: ignore
+        '''Create a 2d array containing piece symbols instead of bitboards.'''
         result = np.full((3, 4), "")
 
         for x in range(0, 3):
@@ -519,6 +510,7 @@ class DobutsuBoard:
         return result # type: ignore
     
     def count(self, piece_type: PieceType, is_white: bool):
+        '''Count occurence of this piecetype of this color.'''
         return len(get_locations(self.piece_boards[piece_type] & self.color_boards[is_white]))
 
     def print(self):
@@ -543,8 +535,12 @@ class DobutsuBoard:
         return tuple(items)
 
     def get_result(self, is_white: bool):
+        '''Obtain the result of the game.'''
+        if self.is_king_win(not is_white):
+            if is_white: return GameResult.BlackWin
+            return GameResult.WhiteWin
 
-        in_check = self.get_check_source(is_white) == None
+        in_check = self.get_check_source(is_white) != None
 
         moves = self.get_legal_moves(is_white)
 
@@ -566,6 +562,7 @@ class DobutsuBoard:
         return hash(self.key)
 
 def value_copy_dict(dictionary: dict):
+    '''Create a copy of a dict, with shallow copied values.'''
     result = {}
 
     for key, value in dictionary.items():
@@ -647,18 +644,41 @@ class GameResult(Enum):
     BlackWin = 2
     Draw = 3
 
+    @staticmethod
+    def get_winner(team: bool):
+        '''
+        Get result corresponding to team bool.
+        '''
+        return GameResult.WhiteWin if team else GameResult.BlackWin
+    
+    def is_checkmate(self):
+        return self == GameResult.WhiteWin \
+            or self == GameResult.BlackWin \
+
+    
+
+
+result_text_map = {
+    GameResult.WhiteWin : "1 - 0",
+    GameResult.BlackWin : "0 - 1",
+    GameResult.Draw : "1/2 - 1/2"
+}
+
 T = TypeVar("T")
 TAction = TypeVar("TAction")
-TNode = TypeVar("TNode", covariant=True, bound="Node")
+TNode = TypeVar("TNode", bound="Node")
 
-class Node(Generic[TNode], EnforceOverrides):
+@runtime_checkable
+class Node(Generic[TNode], Protocol): 
     ''' 
     Provides a "view" of a tree-like data structure.
     '''
 
+    @property
     def children(self) -> list[TNode]:
         raise NotImplementedError("Please Implement this method")
     
+    @property
     def parent(self) -> TNode | None:
         return None
     
@@ -686,11 +706,11 @@ class LazilyExpandedTree(Generic[T], Node["LazilyExpandedTree[T]"]):
         self._compute_children = compute_children
         self._parent = parent
 
-    @override
+    @property
     def parent(self):
         return self._parent
 
-    @override
+    @property
     def children(self) -> list["LazilyExpandedTree[T]"]:
         '''Children are computed once this property is called, and only once.'''
         if self._matrix_init == False:
@@ -699,6 +719,7 @@ class LazilyExpandedTree(Generic[T], Node["LazilyExpandedTree[T]"]):
         return self._children
 
 class DobutsuGameState:
+    '''Board + Turn to play'''
 
     threefold = False
 
@@ -727,7 +748,11 @@ class DobutsuGameState:
     def get_key(self):
         return (self.board, self.is_white)
     
+    def get_result(self):
+        return self.board.get_result(self.is_white)
+
     def move(self, move: Move):
+        '''Create a new state with the move.'''
         return DobutsuGameState(
             self.board.move(move, self.is_white),
             not self.is_white,
@@ -743,30 +768,10 @@ class DobutsuGameState:
     def __hash__(self) -> int:
         return hash(self.get_key())
 
-
-class StateAction(Generic[T, TAction]):
-    def __init__(self, state: T, previous_action: TAction | None):
-        self.state = state
-        self.previous_action = previous_action
-    
-    state: T
-    previous_action: TAction | None
-
-LazySolutionTree = LazilyExpandedTree[StateAction[T, TAction]]
-
 Score = float
-class Mate:
-    def __init__(self, countdown: int) -> None:
-        self.countdown = countdown
-
-    def __str__(self) -> str:
-        return "Mate in " + str(self.countdown)
-
-    def __repr__(self) -> str:
-        return str(self)
     
 def generate_children(node: LazilyExpandedTree[DobutsuGameState]):
-    
+    '''Function to lazily generate children nodes.'''
     if node.instance.threefold: return list[LazilyExpandedTree[DobutsuGameState]]()
     
     children_states : list[DobutsuGameState] = []
@@ -797,16 +802,22 @@ def generate_children(node: LazilyExpandedTree[DobutsuGameState]):
              for i in children_states]
 
 def alternate(val: Score | Mate):
+    '''
+    If Mate: Alternate score between sides to move, since it is required to be relative.
+    Ex. Mate 0 -> Mate 1 -> Mate -1 -> Mate 2...
+    If float: Return -val.
+    '''
     if isinstance(val, Mate):
         if val.countdown <= 0: return Mate(-(val.countdown - 1))
         return Mate(-val.countdown)
     return -val
 
 def get_optimal(val1: Score | Mate, val2: Score | Mate):
-
+    '''Compare Mate values and score values to return optimal score.'''
     if isinstance(val1, Mate) and isinstance(val2, Mate):
-        if val1.countdown == 0 or val2.countdown == 0:
-            return Mate(0)
+        
+        assert not (val1.countdown == 0 or val2.countdown == 0)
+        
         if val1.countdown * val2.countdown > 0:
             return Mate(min(val1.countdown, val2.countdown))   
         return Mate(max(val1.countdown, val2.countdown))
@@ -820,10 +831,10 @@ def get_optimal(val1: Score | Mate, val2: Score | Mate):
     return val1
 
 def compare_score(val1: Score | Mate, val2: Score | Mate):
-
+    '''Compare Mate values and score values. Used to sort moves.'''
     if isinstance(val1, Mate) and isinstance(val2, Mate):
-
-        if val1.countdown * val2.countdown >= 0:
+        assert not (val1.countdown == 0 or val2.countdown == 0)
+        if val1.countdown * val2.countdown > 0:
             return val2.countdown - val1.countdown
         elif val1.countdown > 0: return 1
         return -1
@@ -837,34 +848,74 @@ def compare_score(val1: Score | Mate, val2: Score | Mate):
     if val1.countdown < 0: return -1 # type: ignore
     return 1
 
-def negamax(node: LazilyExpandedTree[T], depth: int,
-             func: Callable[[LazilyExpandedTree[T]], Score | Mate]) -> Score | Mate:
-    if depth == 0 or len(node.children()) == 0: return func(node)
+def is_checkmate(node: LazilyExpandedTree[DobutsuGameState]) -> GameResult:
+    (board, is_white) = node.instance.get_key()
 
-    value = Mate(-sys.maxsize)
+    actions = board.get_legal_moves(is_white)
 
-    for child in node.children():
+    if len(actions[0]) == 0:
+        if board.get_check_source(is_white) != None \
+            or board.is_king_win(is_white):
+            return GameResult.get_winner(is_white)
+        if len(actions[1]) == 0:
+            return GameResult.Draw
+    return GameResult.Ongoing
+
+def negamax_alphabeta_init(node: LazilyExpandedTree[T], depth: int,
+             func: Callable[[LazilyExpandedTree[T]], Score],
+             checkmate_check: Callable[[LazilyExpandedTree[T]], GameResult] = is_checkmate) -> Score | Mate:
+    
+    return negamax_alphabeta(node, depth, Mate(-1), Mate(1), func, checkmate_check)
+
+def negamax_alphabeta(node: LazilyExpandedTree[T], depth: int,
+            alpha: Score | Mate,
+            beta: Score | Mate,
+             func: Callable[[LazilyExpandedTree[T]], Score],
+             checkmate_check: Callable[[LazilyExpandedTree[T]], GameResult] = is_checkmate) -> Score | Mate:
+    '''
+    Negamax algorithm alpha beta attempt modified to accept Mate scores.
+    '''
+
+    if depth == 0 or len(node.children) == 0: 
+        result = checkmate_check(node)
+
+        if result.is_checkmate(): return Mate(0)
+        if result == GameResult.Draw: return 0.0
+
+        return func(node)
+
+    value = Mate(-1)
+
+    for child in node.children:
         
         value = get_optimal(value,
                              alternate(
-                                 negamax(child,
-                                          depth - 1,
-                                            func)))
+                                 negamax_alphabeta(child,
+                                        depth - 1,
+                                        alternate(beta),
+                                        alternate(alpha),                                        
+                                        func,
+                                        checkmate_check)))
+        
+        alpha = get_optimal(alpha, value)
+        if compare_score(alpha, beta) >= 0: break
 
     return value
 
-def negamax_moves(node: LazilyExpandedTree[DobutsuGameState], depth: int,
-             func: Callable[[LazilyExpandedTree[DobutsuGameState]], Score | Mate]):
+def negamax_moves(node: LazilyExpandedTree[T], depth: int,
+             func: Callable[[LazilyExpandedTree[T]], Score],
+             checkmate_check: Callable[[LazilyExpandedTree[T]], GameResult] = is_checkmate
+             ):
+    '''Return of list of children moves evaluated.'''
+    
     assert depth > 0
-
-    (board, is_white) = node.instance.get_key()
 
     moves: list[tuple[Move, Score | Mate]]  = []
 
-    for child in node.children():
+    for child in node.children:
         moves.append((
             child.instance.previous_move, # type: ignore
-            alternate(negamax(child, depth - 1, func))
+            alternate(negamax_alphabeta_init(child, depth - 1, func, checkmate_check))
         ))
 
     return sorted(moves, key=cmp_to_key(
@@ -873,28 +924,18 @@ def negamax_moves(node: LazilyExpandedTree[DobutsuGameState], depth: int,
 inhand_multiplier = 1
 
 # more moves + king_advancement = better
-def heuristic_sample1(node: LazilyExpandedTree[DobutsuGameState]) -> Score | Mate:
-    
-    (board, is_white) = node.instance.get_key()
+def heuristic_sample1(node: LazilyExpandedTree[DobutsuGameState]) -> Score:
+    '''Testing evaluation func.'''
 
-    enemy_node = node if node.instance.is_white else node.parent() 
-
-    actions = board.get_legal_moves(is_white)
-
-    if len(actions[0]) == 0:
-        if board.get_check_source(is_white) != None \
-            or board.is_king_win(is_white):
-            return Mate(0)
-        if len(actions[1]) == 0:
-            return 0.0
+    enemy_node = node if node.instance.is_white else node.parent     
 
     return (heuristic_eval_sample1(node)
             - heuristic_eval_sample1(enemy_node, # type: ignore
                 not node.instance.is_white)) \
                 * (1 if node.instance.is_white else -1)
 
-def heuristic_eval_sample1(node: LazilyExpandedTree[DobutsuGameState], is_white: bool = None) -> Score | Mate: # type: ignore
-    
+def heuristic_eval_sample1(node: LazilyExpandedTree[DobutsuGameState], is_white: bool = None) -> Score: # type: ignore
+    '''Testing evaluation func.'''
     board = node.instance.board
     if is_white == None: is_white = node.instance.is_white
        
@@ -905,6 +946,7 @@ def heuristic_eval_sample1(node: LazilyExpandedTree[DobutsuGameState], is_white:
     return board.get_mobility(is_white) + 1.1* king_advance
 
 def input_to_move(input: str) -> Move:
+    '''Convert str input to move.'''
     if len(input) != 4: 
         raise ValueError("Length was " + str(len(input)))
 
@@ -932,17 +974,20 @@ root_state = LazilyExpandedTree \
 )
 
 def get_root_state_list():
+    '''Get a new stack that can contain states of a game.'''
     state_list : list[LazilyExpandedTree[DobutsuGameState]] = []
     state_list.append(root_state)
 
     return state_list
 
 class DobutsuEngine(Engine):
-
+    '''Testing Engine'''
     state_list: list[LazilyExpandedTree[DobutsuGameState]] = []
 
-    def __init__(self) -> None:
+    def __init__(self,
+                 func: Callable[[LazilyExpandedTree[DobutsuGameState]], Score | Mate] = heuristic_sample1) -> None:
         self.reset()
+        self.func = func
 
     def move(self, move: str) -> bool:
 
@@ -955,17 +1000,18 @@ class DobutsuEngine(Engine):
             self.state_list[-1]
         ))
 
-        if (len(self.state_list[-1].children()) == 0): 
+        if (len(self.state_list[-1].children) == 0): 
             return True
         
         return False
               
-    def search(self, depth: int) -> str | None:
+    def search(self, depth: int) -> MoveEvaluation | None:
         evaluation = negamax_moves(self.state_list[-1],
                     depth,
-                    heuristic_sample1)
+                    heuristic_sample1,
+                    is_checkmate)
         
-        return str(evaluation[0][0]) if len(evaluation) > 0 \
+        return MoveEvaluation(str(evaluation[0][0]), evaluation[0][1]) if len(evaluation) > 0 \
                 else None
 
     def reset(self) -> None:
@@ -985,43 +1031,22 @@ class DobutsuEngine(Engine):
 
         return result
 
-class PlayerEngine(Engine):
-    def __init__(self, engine: Engine):
-        self.__engine = engine
-
-    def move(self, move: str) -> bool:
-        return self.__engine.move(move)
+class MoveRecord:
+    '''A record containing data of a move.'''
+    def __init__(self, move: str, gamestate: str, eval: float) -> None:
+        self.move = move
+        self.gamestate = gamestate
+        self.eval = eval
     
-    def search(self, depth: int) -> str | None:
-        return input()
-
-    def reset(self) -> None:
-        self.__engine.reset()
-    def show_board(self) -> str:
-        return self.__engine.show_board()
-        
-
-class Gameplay:
-
-    def __init__(self, movelist: list[str], gamestates: list[str]) -> None:
-        self.movelist = movelist
-        self.gamestates = gamestates
-    
-    def combine(self):
-        result: list[str] = []
-
-        for i in range(len(self.movelist)):
-            result.append(f"[{i}]: " + self.movelist[i])
-            result.append(self.gamestates[i])
-
-        return result
-
 def play(white_engine: Engine, black_engine: Engine,
-          white_depth: int, black_depth: int) -> Gameplay:
-    
-    movelist : list[str] = []
-    gamestates: list[str] = []
-
+          white_depth: int, black_depth: int,
+          arbitrator: Engine | None = None) \
+    -> Generator[MoveRecord, Any, None]:
+    '''
+    Play 2 engines together.
+    Returns a sequence of move records.
+    May optionally add an arbitrator to control game generation.
+    '''
     engines = [white_engine, black_engine]
     depths = [white_depth, black_depth]
 
@@ -1029,25 +1054,77 @@ def play(white_engine: Engine, black_engine: Engine,
         for i in range(2):
             move = engines[i].search(depths[i])
 
-            if (move == None):
-                return Gameplay(movelist,
-                                 gamestates)
-
-            movelist.append(move)
+            if move == None or isinstance(move.eval, Mate):
+                return
 
             for k in range(2):
-                _ = engines[k].move(move)
+                _ = engines[k].move(move.move)
 
-            gamestates.append(engines[i].show_board())
+            if isinstance(arbitrator, Engine) \
+                 and arbitrator.move(move.move) == True:
+                    return
+
+            yield \
+                MoveRecord(move.move,
+                            engines[i].show_board(),
+                            move.eval)
+                       
+def playself(engine: Engine,
+          depth: int,
+          arbitrator: Engine | None = None) \
+    -> Generator[MoveRecord, Any, None]:
+    '''
+    Let an engine play itself.
+    Returns a sequence of move records.
+    May optionally add an arbitrator to control game generation.
+    '''
+
+    while(True):
+        move = engine.search(depth)
+
+        if move == None or isinstance(move.eval, Mate):
+            return
+
+        _ = engine.move(move.move)
+
+        if isinstance(arbitrator, Engine) \
+                and arbitrator.move(move.move) == True:
+                return
+
+        yield \
+            MoveRecord(move.move,
+                        engine.show_board(),
+                        move.eval)
+
+def flatten(iterables: Iterable[Iterable]):
+    '''Flattens a 2D sequence to 1D.'''
+    return [item 
+            for sublist in iterables 
+            for item in sublist]
+
+def play_same_depth(white_engine: Engine, black_engine: Engine,
+          depth: int, arbitrator: Engine | None = None) -> Generator[MoveRecord, Any, None]:
+    '''Play 2 engine at same depth.'''
+    return play(white_engine, black_engine, depth, depth, arbitrator)
 
 print("Begin:")
 
 dobutsu_engine = DobutsuEngine()
 
-fsf_engine = FairyStockfishEngine("fairy-stockfish_x86-64.exe")
-fsf_engine.uci()
-fsf_engine.set_variant('dobutsu')
+def gamestate_to_bits(gamestate: DobutsuGameState) -> list[int]:
+    return flatten([
+                    [int(gamestate.is_white), int(not gamestate.is_white)],
+                    flatten([flatten(bitboard.astype(int)) for _, bitboard in gamestate.board.color_boards.items()]),
+                    flatten([flatten(bitboard.astype(int)) for _, bitboard in gamestate.board.piece_boards.items()]),
+                    flatten([[count for _, count in hand.items()] for _, hand in gamestate.board.hand.items()])
+                    ])
 
-# result = play(dobutsu_engine, fsf_engine, 1, 6)
-# print_list_vertical(result.combine(), "===================================") 
+def create_fsf_engine() -> FairyStockfishEngine:
+    '''Create fsf engine to play Dobutsu.'''
+    _fsf_engine = FairyStockfishEngine("AIFinalProject\\fairystockfish\\fairy-stockfish_x86-64.exe")
+    _fsf_engine.uci()
+    _fsf_engine.set_variant('dobutsu')
+    return _fsf_engine
+
+fsf_engine = create_fsf_engine()
 # %%

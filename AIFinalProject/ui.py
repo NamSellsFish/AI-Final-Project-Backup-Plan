@@ -2,9 +2,11 @@
 
 from typing import Callable, Iterable, TypeVar
 import PySimpleGUI as pyGUI
-from DobutsuBoard import DobutsuEngine, DobutsuGameState, ColoredPiece, PieceDrop, PieceDrops, PieceMove, PieceType, dobutsu_engine, \
-    Chick, Elephant, Giraffe, Lion, Hen
-
+from fairysf import Mate, MoveEvaluation
+from DobutsuBoard import DobutsuEngine, DobutsuGameState, ColoredPiece, GameResult, LazilyExpandedTree, PieceDrop, PieceDrops, PieceMove, PieceType, Score, dobutsu_engine, \
+    Chick, Elephant, Giraffe, Lion, Hen, flatten, gamestate_to_bits, result_text_map
+from sklearn.linear_model import LinearRegression
+from joblib import dump, load
 # Define the layout
 
 T = TypeVar("T")
@@ -13,7 +15,9 @@ import PIL.Image
 import io
 import base64
 
-def resize_image(image_path, resize: tuple[int, int] | None): #image_path: "C:User/Image/img.jpg"
+#Source: https://stackoverflow.com/a/73295036/21007334
+def resize_image(image_path, resize: tuple[int, int] | None):
+    '''Resize an image to fit a button.'''
     if isinstance(image_path, str):
         img = PIL.Image.open(image_path)
     else:
@@ -36,37 +40,32 @@ def resize_image(image_path, resize: tuple[int, int] | None): #image_path: "C:Us
 img_size = (52, 52)
 
 texture_map = {
-    '.' : resize_image('pieces\\empty.png', img_size),
+    '.' : resize_image('AIFinalProject\\pieces\\empty.png', img_size),
 
-    'C' : resize_image('pieces\\w-pawn.png', img_size),
-    'E' : resize_image('pieces\\w-elephant.png', img_size),
-    'G' : resize_image('pieces\\w-giraffe.png', img_size),
-    'L' : resize_image('pieces\\w-lion.png', img_size),
-    'H' : resize_image('pieces\\w-commoner.png', img_size),
+    'C' : resize_image('AIFinalProject\\pieces\\w-pawn.png', img_size),
+    'E' : resize_image('AIFinalProject\\pieces\\w-elephant.png', img_size),
+    'G' : resize_image('AIFinalProject\\pieces\\w-giraffe.png', img_size),
+    'L' : resize_image('AIFinalProject\\pieces\\w-lion.png', img_size),
+    'H' : resize_image('AIFinalProject\\pieces\\w-commoner.png', img_size),
 
-    'c' : resize_image('pieces\\b-pawn.png', img_size),
-    'e' : resize_image('pieces\\b-elephant.png', img_size),
-    'g' : resize_image('pieces\\b-giraffe.png', img_size),
-    'l' : resize_image('pieces\\b-lion.png', img_size),
-    'h' : resize_image('pieces\\b-commoner.png', img_size),
+    'c' : resize_image('AIFinalProject\\pieces\\b-pawn.png', img_size),
+    'e' : resize_image('AIFinalProject\\pieces\\b-elephant.png', img_size),
+    'g' : resize_image('AIFinalProject\\pieces\\b-giraffe.png', img_size),
+    'l' : resize_image('AIFinalProject\\pieces\\b-lion.png', img_size),
+    'h' : resize_image('AIFinalProject\\pieces\\b-commoner.png', img_size),
 }
 
-
-
 white_hand_color = 'gray'
-
-def flatten(iterables: Iterable[Iterable]):
-    return [item 
-            for sublist in iterables 
-            for item in sublist]
 
 tile_size = (6, 3)
 font = ('Times New Roman', 12)
 
 def get_text(input):
+    '''Return Text Element.'''
     return pyGUI.Text(input, size=(5, 1),
                       font=font,
                        justification='center',
+                       auto_size_text=True
                        )
 
 white_hand_layout: list[list[pyGUI.Element]] = [
@@ -161,9 +160,15 @@ board_layout = [
             for y in range(4)]
 
 def get_board_tile(input: tuple[int, int]):
+    '''
+    Use instead of direct indexing,
+    since the pos of the matrix of the UI 
+    doesn't match that of the internal representation.
+    '''
     return board_layout[3 - input[1]][input[0]]
 
 def reload_color():
+    '''Reload color of the board.'''
     for button in white_hand_layout[0]:
         button.update(button_color = white_hand_color)
     
@@ -175,16 +180,28 @@ def reload_color():
             get_board_tile((x, y)).update(button_color = \
             'lightgreen' if y == 0 or y == 3 \
                         else 'lightyellow')
+    
+    (board, is_white) = dobutsu_engine.state_list[-1].instance.get_key()
 
+    check_location = board.get_check_source(is_white)
 
-# Create the window
+    if check_location == None: return
+
+    get_board_tile(board.get_king_location(is_white)).update(
+        button_color='red')
+
+reset_button = pyGUI.Button("Reset")
+swap_button = pyGUI.Button("Swap")
+status_text = pyGUI.Text()
+
+# Create the window by flattening 3D list to 2D
 window = pyGUI.Window('Dobutsu', flatten(
             [
                 black_hand_layout,
                 board_layout,
-                [[pyGUI.Text()]],
+                [[status_text]],
                 white_hand_layout,
-                [[pyGUI.Button("Reset")]]
+                [[reset_button, swap_button]]
             ],
         ),
     element_justification='center',
@@ -197,11 +214,14 @@ previous_element : pyGUI.Element | None = None
 dobutsu_engine = DobutsuEngine()
 dobutsu_engine.reset()
 
-
+is_over = False
 
 def load_board(gamestate: DobutsuGameState = None): # type: ignore
-    
+    '''Load pieces from a state onto the UI.'''
+    global is_over
     if gamestate == None: gamestate = dobutsu_engine.state_list[-1].instance
+
+    ( board, is_white ) = gamestate.get_key()
 
     symbol_matrix = gamestate.board.to_symbol_array()
     
@@ -232,27 +252,70 @@ def load_board(gamestate: DobutsuGameState = None): # type: ignore
 
         i += 1
 
+    result = board.get_result(is_white)
+    if result != GameResult.Ongoing:
+        is_over = True
+        status_text.update(result_text_map[result])
+    else:
+        status_text.update(("White" if is_white else "Black") + " to play.")
+
+    reload_color()
+
 
 def is_hand_tile(element: pyGUI.Element | None):
+    '''Check if clicked element is a hand tile.'''
     if element == None: return False
     return isinstance(element.metadata, ColoredPiece)
 
 def is_board_tile(element: pyGUI.Element | None):
+    '''Check if clicked element is a board tile.'''
     if element == None: return False
     return isinstance(element.metadata, tuple)
-
-def is_valid_selection(element: pyGUI.Element, is_white: bool,
-                        legal_actions: tuple[list[PieceMove], list[PieceDrops]]):
-    
-    ...
-
 
 load_board()
 
 selected_color = 'white'
 legal_move_color = 'yellow'
 
-# Event loop
+def threefold_check():
+    '''Check three-fold repition and update status text.'''
+    gamestate = dobutsu_engine.state_list[-1].instance
+
+    if gamestate.threefold: 
+        status_text.update("Three-fold repitition: 1/2 - 1/2")
+
+def engine_play():
+    '''Request the engine to play and output to the board.'''
+    
+    if is_over: return
+
+    status_text.update("Engine thinking.")
+
+    window.Finalize()
+    
+    move = dobutsu_engine.search(6)
+
+    if not isinstance(move, MoveEvaluation): return
+
+    dobutsu_engine.move(move.move)
+
+    load_board()
+
+lr : LinearRegression = load('AIFinalProject\\linear_regression.joblin')
+
+def logistics_regression_evaluation(
+        node: LazilyExpandedTree[DobutsuGameState]) -> Score:
+    return lr.predict([gamestate_to_bits(node.instance)])[0] # type: ignore
+
+dobutsu_engine = DobutsuEngine(logistics_regression_evaluation)
+
+
+'''
+WINDOW LOOP:
+'''
+
+engine_turn = False
+
 while True:
     event, values = window.read() # type: ignore
     
@@ -266,11 +329,26 @@ while True:
 
     reload_color()
 
+    if selected == reset_button:
+        dobutsu_engine.reset()
+        load_board()
+        is_over = False
+        continue
+
+    if selected == swap_button:
+        engine_play()
+        continue
+
+    gamestate = dobutsu_engine.state_list[-1].instance
+
+    if gamestate.threefold: 
+        status_text.update("Three-fold repitition: 1/2 - 1/2")
+        continue
+
     ( board, is_white ) = dobutsu_engine.state_list[-1].instance.get_key()
 
-    ( legal_moves, legal_drops ) = board.get_legal_moves(is_white)
-        
-    
+    ( legal_moves, legal_drops ) = board.get_legal_moves(is_white) 
+
     if is_hand_tile(selected):
 
         colored_piece = selected.metadata
@@ -312,6 +390,7 @@ while True:
 
             previous_element = selected
 
+            threefold_check()
             continue
 
         elif is_board_tile(previous_element):
@@ -320,23 +399,35 @@ while True:
                 dobutsu_engine.move(str(move))
                 load_board()
 
+                previous_element = None
+                reload_color()
+                threefold_check()
+                window.Finalize()
+                engine_play()
+            else:
+                previous_element = None
 
         elif is_hand_tile(previous_element):
             drop = PieceDrop(previous_element.metadata.piece_type, location)
             if len([i for i in legal_drops if i[0] == location and drop.piece_type in i[1]]) == 1:
                 dobutsu_engine.move(str(drop))
                 load_board()
+
+                previous_element = None
+                reload_color()
+                threefold_check()
+                window.Finalize()
+                engine_play()
+
+            else:
+                previous_element = None
                      
-        previous_element = None
-        reload_color()
-        continue
-
+        else:
+            previous_element = None
+        
     else:
-
         previous_element = None
+           
 
-
-
-# Close the window
 window.close()
 # %%
