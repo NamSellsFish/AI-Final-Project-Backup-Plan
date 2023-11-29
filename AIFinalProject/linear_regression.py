@@ -35,6 +35,9 @@ print(len(games))
 # Split group into list.
 game_datasets : list[pd.DataFrame] = [games.get_group(index) for index in range(len(games))]
 
+# Filter out games, if necessary.
+game_datasets = game_datasets[11:]
+
 # Map of game state to evaluation
 position_eval_map = dict[DobutsuGameState, Score]()
 
